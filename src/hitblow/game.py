@@ -14,7 +14,8 @@ def play(digits=3):
 
     # ===== ① 開始時に足す（難いに度・あいさつ など）: ここに書く =====
     from .enemy import select_enemy_mode
-
+    from .time import start_timer
+    
     # CPU戦の場合、自分で決めた数値を入力する
     user_custom_secret = select_enemy_mode(digits)
     
@@ -22,6 +23,8 @@ def play(digits=3):
     if user_custom_secret is not None:
         my_secret = user_custom_secret
 
+    start_timer()
+    
     tries = 0
     while True:
         # まだアイテムを使える状態なら、使うかどうかを尋ねる
@@ -47,7 +50,8 @@ def play(digits=3):
 
         if hit == digits:
             # ===== ③ 勝利時に足す（スコア・履歴 など）: ここに書く =====
-            print(f"正解！ {tries} 回で当たり（答え {cpu_secret}）")
+            from .time import show_clear_time
+            show_clear_time(tries, cpu_secret, is_victory=True)
             break
 
         # ===== ② 入力コマンドに足す（ヒント など）: ここに書く（import もここに） =====

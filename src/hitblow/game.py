@@ -60,4 +60,7 @@ def play(digits=3):
         # 💡 【CPUのターン】
         # CPUは、プレイヤーの数字（my_secret）を推理して当てにいきます
         if cpu_turn(digits, my_secret):
+            # CPUが正解してしまった場合
+            from .timer import show_clear_time
+            show_clear_time(tries, cpu_secret, is_victory=False)
             break

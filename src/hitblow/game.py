@@ -3,21 +3,24 @@ from .item import show_secret_number, can_use_item
 
 
 def play(digits=3):
-    secret = make_secret(digits) # 本来はプレイヤーが当てる相手の数字
-    teki = make_secret(digits)   # アイテム用のダミーなど
+    # 1. 最初にお互いの数字の「デフォルト（初期値）」を決める
+    cpu_secret = make_secret(digits)  # プレイヤーが当てる相手の数字
+    my_secret = make_secret(digits)   # CPUが当てる自分の数字（通常時はランダム）
+    
+    # アイテム用の数字（通常時は cpu_secret と同じにしておく）
+    teki = cpu_secret
+    
     print(f"Hit & Blow（{digits} 桁・重複なし）")
 
-    # ===== ① 開始時に足す（難易度・あいさつ など）: ここに書く =====
+    # ===== ① 開始時に足す（難いに度・あいさつ など）: ここに書く =====
     from .enemy import select_enemy_mode
 
-    # CPU戦の場合、自分で決めた数値を my_secret として受け取る
-    my_secret = select_enemy_mode(digits)
+    # CPU戦の場合、自分で決めた数値を入力する
+    user_custom_secret = select_enemy_mode(digits)
     
-    # 💡 CPU戦モードなら、CPUが当てる対象（プレイヤーの秘密の数）を自分で決めた数値にする
-    if my_secret is not None:
-        # 変数名がややこしいですが、現状の game.py の末尾で `cpu_turn(digits, secret)` に渡しているため、
-        # ここで `secret` の中身をプレイヤーが自分で決めた数値に書き換えます。
-        secret = my_secret
+    # 💡 CPU戦モードなら、CPUが当てる対象（my_secret）を入力された数値に差し替える
+    if user_custom_secret is not None:
+        my_secret = user_custom_secret
 
     tries = 0
     while True:
@@ -37,19 +40,20 @@ def play(digits=3):
 
         tries += 1
         
-        # 💡 注意: 現状のコードのままだと、プレイヤーも自分の決めた数字（secret）を当てるゲームになってしまいます。
-        # もし「プレイヤーはCPUの数字（teki）を当てたい」場合は、ここの第1引数を teki に変更してください。
-        hit, blow = judge(secret, guess) 
+        # 💡 【プレイヤーの判定】
+        # プレイヤーは、CPUの数字（cpu_secret）を推理して当てにいきます
+        hit, blow = judge(cpu_secret, guess) 
         print(f"  Hit={hit}  Blow={blow}")
 
         if hit == digits:
             # ===== ③ 勝利時に足す（スコア・履歴 など）: ここに書く =====
-            print(f"正解！ {tries} 回で当たり（答え {secret}）")
+            print(f"正解！ {tries} 回で当たり（答え {cpu_secret}）")
             break
 
         # ===== ② 入力コマンドに足す（ヒント など）: ここに書く（import もここに） =====
         from .enemy import cpu_turn
 
-        # CPUは、プレイヤーが自分で決めた数字（secret）を狙う
-        if cpu_turn(digits, secret):
+        # 💡 【CPUのターン】
+        # CPUは、プレイヤーの数字（my_secret）を推理して当てにいきます
+        if cpu_turn(digits, my_secret):
             break

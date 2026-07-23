@@ -1,6 +1,7 @@
 from .core import judge, make_secret
 from .item import show_secret_number, can_use_item
-
+from .enemy import select_enemy_mode
+from .timer import start_timer
 
 def play(digits=3):
     # 1. 最初にお互いの数字の「デフォルト（初期値）」を決める
@@ -13,8 +14,7 @@ def play(digits=3):
     print(f"Hit & Blow（{digits} 桁・重複なし）")
 
     # ===== ① 開始時に足す（難いに度・あいさつ など）: ここに書く =====
-    from .enemy import select_enemy_mode
-    from .time import start_timer
+
     
     # CPU戦の場合、自分で決めた数値を入力する
     user_custom_secret = select_enemy_mode(digits)
@@ -75,7 +75,7 @@ def play(digits=3):
 
         if hit == digits:
             # ===== ③ 勝利時に足す（スコア・履歴 など）: ここに書く =====
-            from .time import show_clear_time
+            from .timer import show_clear_time
             show_clear_time(tries, cpu_secret, is_victory=True)
             break
 
@@ -86,6 +86,6 @@ def play(digits=3):
         # CPUは、プレイヤーの数字（my_secret）を推理して当てにいきます
         if cpu_turn(digits, my_secret):
             # CPUが正解してしまった場合
-            from .time import show_clear_time
+            from .timer import show_clear_time
             show_clear_time(tries, cpu_secret, is_victory=False)
             break

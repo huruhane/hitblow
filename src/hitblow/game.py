@@ -29,12 +29,37 @@ def play(digits=3):
     while True:
         # まだアイテムを使える状態なら、使うかどうかを尋ねる
         if can_use_item():
-            item = input("アイテムを使いますか？（y/n）: ").strip().lower()
-            if item == "y":
-                show_secret_number(teki)
-                continue
+            # --- ここから修正部分 ---
+            item_loop = True
+            while item_loop:
+                # yかnを強制するようにプロンプトを少し変更
+                item = input("アイテムを使いますか？【相手の数値が一つわかる】（y/n）: ").strip().lower()
+
+                if item == "y":
+                    show_secret_number(teki)
+                    # continue すると、can_use_item() がFalseになり、
+                    # 下の guess の入力に進むので、アイテムループだけを抜ける
+                    item_loop = False
+                    # さらに continue して while True を先頭に戻す
+                    # (これでcan_use_itemがFalseと判定され、下の予想に進む)
+                    continue 
+
+                elif item == "n" or item == "": # "" はEnterのみの場合
+                    # アイテムを使わない。guessの入力へ進む。
+                    item_loop = False
+                    # そのままこのブロックを抜けて、下の予想に進む
+                else:
+                    # y, n, "" 以外の場合は再度ループ
+                    print("エラー: 'y' または 'n' を入力してください。")
+            # --- ここまで修正部分 ---
 
         # アイテムを使わない（n）か、すでにアイテム使用済みの場合はこちらに進む
+        # (item="y" の後の continue によって、ここに到達しないケースもある)
+        # もしアイテムを使った直後に続けて予想させたい場合は、
+        # ここに到達できるようにitemループを制御します。
+        # 今の play関数の構造上、アイテム使用後に continue すると、
+        # `tries += 1` などが一度飛ばされます。
+
         guess = input("予想 > ").strip()
 
         if len(guess) != digits or not guess.isdigit():

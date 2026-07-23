@@ -1,4 +1,4 @@
-"""Tkinter による Hit & Blow の GUI 版。
+"""Tkinter による Hit & Blow の GUI 版（カード表示版）。
 
 CLI 版（game.py / cli.py）とは別ファイルで、こちらは
     python -m hitblow.gui
@@ -6,23 +6,36 @@ CLI 版（game.py / cli.py）とは別ファイルで、こちらは
     python gui.py   （hitblow パッケージのフォルダ内に置いた場合）
 で起動できる。
 
-判定ロジックは core.py の judge / make_secret をそのまま使い、
+判定ロジックは core.py の judge / make_secret をそのまま使う。
 CPU 対戦モードの「候補を絞り込みながら推理する」ロジックは
 enemy.py の考え方を、input() を使わないイベント駆動の形に書き直したもの。
+アイテム（ヒント表示）も同様に、item.py の「1ゲームにつき1回、テキの
+数字を1桁だけ見せる」という考え方を、print() ではなく履歴カードへの
+追加としてイベント駆動の形に書き直したもの（使用済みフラグは GUI 側の
+インスタンス変数として持つため、「もう一度遊ぶ」で正しくリセットされる）。
+
+このバージョンでの変更点:
+    - 予想の結果を、数字ごとの「カード」として表示
+        - 桁が完全一致（Hit）              -> 緑背景
+        - 数字は合っているが桁違い（Blow） -> オレンジ背景
+        - どちらでもない                    -> グレー背景
+    - 履歴をスクロール可能なカード一覧として表示（従来のテキストログの代わり）
+    - アイテム（ヒント表示）ボタンを追加。1ゲームにつき1回だけ使え、
+      テキ（あなたが当てる相手の数字）の中からランダムに1桁を見せる。
 
 含まれる機能:
-    - 予想入力・Hit/Blow 表示（基本機能）
+    - 予想入力・Hit/Blow のカード表示（基本機能）
     - CPU 対戦モード（交互にターンを進める）
+    - アイテム（ヒント表示・1ゲーム1回）
 
 含まれない機能（CLI 版のみ）:
-    - アイテム（ヒント表示）
     - タイマー表示
 """
 
 import itertools
 import random
 import tkinter as tk
-from tkinter import messagebox, scrolledtext
+from tkinter import messagebox
 
 try:
     # パッケージ内から `python -m hitblow.gui` で起動する場合
@@ -31,22 +44,31 @@ except ImportError:
     # 単独ファイルとして `python gui.py` で起動する場合の保険
     from core import judge, make_secret
 
+# カードの配色（Hit=緑, Blow=オレンジ, それ以外=グレー）
+COLOR_HIT = "#4CAF50"
+COLOR_BLOW = "#FF9800"
+COLOR_NONE = "#E0E0E0"
+COLOR_HIT_FG = "white"
+COLOR_BLOW_FG = "white"
+COLOR_NONE_FG = "#555555"
+
 
 class HitBlowGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Hit & Blow")
-        self.root.geometry("480x560")
+        self.root.geometry("560x680")
         self.root.resizable(False, False)
 
         # ゲーム状態を保持する変数（開始時にリセットされる）
         self.digits = 3
         self.is_cpu_mode = False
-        self.cpu_secret = ""  # プレイヤーが当てる相手（CPU or ランダム）の数字
+        self.cpu_secret = ""  # プレイヤーが当てる相手（CPU or ランダム）の数字＝テキ
         self.my_secret = ""  # CPU が当てる、プレイヤー側の数字
         self.cpu_candidates = []
         self.tries = 0
         self.game_over = False
+        self.item_used = False  # アイテム（ヒント）を使用済みかどうか
 
         self._build_setup_frame()
 
@@ -90,6 +112,25 @@ class HitBlowGUI:
         )
         self.secret_entry.pack(anchor="w", pady=(5, 0))
 
+        # 凡例（色の意味を先に見せておく）
+        legend_row = tk.Frame(self.setup_frame)
+        legend_row.pack(pady=(15, 0), anchor="w")
+        self._legend_card(
+            legend_row, "1", COLOR_HIT, COLOR_HIT_FG, "Hit（位置も数字も一致）"
+        )
+        legend_row2 = tk.Frame(self.setup_frame)
+        legend_row2.pack(pady=(5, 0), anchor="w")
+        self._legend_card(
+            legend_row2,
+            "2",
+            COLOR_BLOW,
+            COLOR_BLOW_FG,
+            "Blow（数字は合っているが位置違い）",
+        )
+        legend_row3 = tk.Frame(self.setup_frame)
+        legend_row3.pack(pady=(5, 0), anchor="w")
+        self._legend_card(legend_row3, "3", COLOR_NONE, COLOR_NONE_FG, "含まれない数字")
+
         self.start_button = tk.Button(
             self.setup_frame, text="ゲーム開始", command=self._start_game, width=15
         )
@@ -97,6 +138,20 @@ class HitBlowGUI:
 
         self.setup_error_label = tk.Label(self.setup_frame, text="", fg="red")
         self.setup_error_label.pack()
+
+    def _legend_card(self, parent, digit, bg, fg, description):
+        tk.Label(
+            parent,
+            text=digit,
+            width=3,
+            height=1,
+            bg=bg,
+            fg=fg,
+            font=("", 12, "bold"),
+            relief="solid",
+            bd=1,
+        ).pack(side="left")
+        tk.Label(parent, text="  " + description).pack(side="left")
 
     def _toggle_secret_entry(self):
         if self.cpu_mode_var.get():
@@ -114,7 +169,7 @@ class HitBlowGUI:
         self.digits = digits
         self.is_cpu_mode = self.cpu_mode_var.get()
 
-        # プレイヤーが当てる相手の数字（ランダム生成）
+        # プレイヤーが当てる相手の数字（ランダム生成）＝テキ
         self.cpu_secret = make_secret(digits)
 
         if self.is_cpu_mode:
@@ -138,12 +193,13 @@ class HitBlowGUI:
 
         self.tries = 0
         self.game_over = False
+        self.item_used = False  # 新しいゲームなのでアイテムも使える状態に戻す
 
         self.setup_frame.destroy()
         self._build_game_frame()
 
     # ------------------------------------------------------------------
-    # 画面②: ゲーム本編（予想入力・ログ表示）
+    # 画面②: ゲーム本編（予想入力・カード履歴表示）
     # ------------------------------------------------------------------
     def _build_game_frame(self):
         self.game_frame = tk.Frame(self.root, padx=20, pady=20)
@@ -156,16 +212,50 @@ class HitBlowGUI:
             font=("", 13, "bold"),
         ).pack(pady=(0, 10))
 
-        # ログ表示欄
-        self.log_area = scrolledtext.ScrolledText(
-            self.game_frame, width=52, height=20, state="disabled", wrap="word"
+        # --- スクロール可能な履歴エリア（カードを並べる場所） ---
+        history_container = tk.Frame(self.game_frame)
+        history_container.pack(fill="both", expand=True)
+        self.history_canvas = tk.Canvas(
+            history_container,
+            width=500,
+            height=340,
+            highlightthickness=1,
+            highlightbackground="#CCCCCC",
         )
-        self.log_area.pack(pady=5)
+        scrollbar = tk.Scrollbar(
+            history_container, orient="vertical", command=self.history_canvas.yview
+        )
+        self.history_canvas.configure(yscrollcommand=scrollbar.set)
+        self.history_canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        self.history_frame = tk.Frame(self.history_canvas)
+        self.history_window = self.history_canvas.create_window(
+            (0, 0), window=self.history_frame, anchor="nw"
+        )
+        self.history_frame.bind(
+            "<Configure>",
+            lambda e: self.history_canvas.configure(
+                scrollregion=self.history_canvas.bbox("all")
+            ),
+        )
+        self.history_canvas.bind(
+            "<Configure>",
+            lambda e: self.history_canvas.itemconfig(
+                self.history_window, width=e.width
+            ),
+        )
+        # マウスホイールでスクロール
+        self.history_canvas.bind_all(
+            "<MouseWheel>",
+            lambda e: self.history_canvas.yview_scroll(
+                int(-1 * (e.delta / 120)), "units"
+            ),
+        )
 
         # 入力欄
         input_row = tk.Frame(self.game_frame)
-        input_row.pack(pady=10)
-
+        input_row.pack(pady=10, fill="x")
         tk.Label(input_row, text="予想 > ").pack(side="left")
         self.guess_var = tk.StringVar()
         self.guess_entry = tk.Entry(input_row, textvariable=self.guess_var, width=15)
@@ -178,15 +268,122 @@ class HitBlowGUI:
         )
         self.submit_button.pack(side="left")
 
-        self._log(f"ゲームを開始します（{self.digits}桁・重複なし）。")
-        if self.is_cpu_mode:
-            self._log("⚔️ CPU対戦モード：あなたとCPUが交互に相手の数字を当て合います。")
+        # アイテム（ヒント）ボタン
+        item_row = tk.Frame(self.game_frame)
+        item_row.pack(pady=(0, 5), fill="x")
+        self.item_button = tk.Button(
+            item_row,
+            text="🎁 アイテムを使う（ヒントを見る・1ゲーム1回）",
+            command=self._use_item,
+        )
+        self.item_button.pack(side="left")
 
-    def _log(self, text):
-        self.log_area.config(state="normal")
-        self.log_area.insert("end", text + "\n")
-        self.log_area.config(state="disabled")
-        self.log_area.see("end")
+        self.status_label = tk.Label(self.game_frame, text="", font=("", 11, "bold"))
+        self.status_label.pack(pady=(10, 0))
+
+        self._add_info_row(f"ゲームを開始します（{self.digits}桁・重複なし）。")
+        if self.is_cpu_mode:
+            self._add_info_row(
+                "⚔️ CPU対戦モード：あなたとCPUが交互に相手の数字を当て合います。"
+            )
+
+    # ------------------------------------------------------------------
+    # 履歴エリアへの行追加
+    # ------------------------------------------------------------------
+    def _add_info_row(self, text):
+        """カードではない、通常のお知らせテキストを履歴に追加する。"""
+        row = tk.Frame(self.history_frame, pady=4)
+        row.pack(fill="x", anchor="w")
+        tk.Label(row, text=text, anchor="w", justify="left", wraplength=460).pack(
+            side="left"
+        )
+        self._scroll_to_bottom()
+
+    def _add_guess_row(self, label_text, guess, secret, hit, blow):
+        """予想結果を、桁ごとに色分けしたカードとして履歴に追加する。"""
+        row = tk.Frame(self.history_frame, pady=6)
+        row.pack(fill="x", anchor="w")
+
+        tk.Label(row, text=label_text, width=6, anchor="w", font=("", 10, "bold")).pack(
+            side="left"
+        )
+
+        cards_frame = tk.Frame(row)
+        cards_frame.pack(side="left")
+        for i, ch in enumerate(guess):
+            if ch == secret[i]:
+                bg, fg = COLOR_HIT, COLOR_HIT_FG
+            elif ch in secret:
+                bg, fg = COLOR_BLOW, COLOR_BLOW_FG
+            else:
+                bg, fg = COLOR_NONE, COLOR_NONE_FG
+            tk.Label(
+                cards_frame,
+                text=ch,
+                width=3,
+                height=1,
+                bg=bg,
+                fg=fg,
+                font=("", 16, "bold"),
+                relief="solid",
+                bd=1,
+            ).pack(side="left", padx=2)
+
+        tk.Label(
+            row,
+            text=f"   Hit={hit}  Blow={blow}",
+            anchor="w",
+        ).pack(side="left", padx=(10, 0))
+
+        self._scroll_to_bottom()
+
+    def _add_hint_row(self, digit):
+        """アイテム使用時のヒントを、専用の見た目で履歴に追加する。"""
+        row = tk.Frame(self.history_frame, pady=6)
+        row.pack(fill="x", anchor="w")
+
+        tk.Label(row, text="ヒント", width=6, anchor="w", font=("", 10, "bold")).pack(
+            side="left"
+        )
+        tk.Label(
+            row,
+            text=digit,
+            width=3,
+            height=1,
+            bg="#2196F3",
+            fg="white",
+            font=("", 16, "bold"),
+            relief="solid",
+            bd=1,
+        ).pack(side="left", padx=2)
+        tk.Label(
+            row,
+            text="   この数字はテキに含まれています",
+            anchor="w",
+        ).pack(side="left", padx=(10, 0))
+
+        self._scroll_to_bottom()
+
+    def _scroll_to_bottom(self):
+        self.history_frame.update_idletasks()
+        self.history_canvas.configure(scrollregion=self.history_canvas.bbox("all"))
+        self.history_canvas.yview_moveto(1.0)
+
+    # ------------------------------------------------------------------
+    # アイテム（ヒント表示）
+    # ------------------------------------------------------------------
+    def _use_item(self):
+        """テキ（cpu_secret）の中からランダムに1桁を見せる。1ゲームにつき1回のみ。"""
+        if self.game_over or self.item_used:
+            return
+
+        idx = random.randint(0, self.digits - 1)
+        digit = self.cpu_secret[idx]
+
+        self._add_hint_row(digit)
+
+        self.item_used = True
+        self.item_button.config(state="disabled")
 
     # ------------------------------------------------------------------
     # プレイヤーの手番
@@ -207,10 +404,13 @@ class HitBlowGUI:
         self.tries += 1
 
         hit, blow = judge(self.cpu_secret, guess)
-        self._log(f"[あなた] 予想 > {guess}   Hit={hit}  Blow={blow}")
+        self._add_guess_row("あなた", guess, self.cpu_secret, hit, blow)
 
         if hit == self.digits:
-            self._log(f"\n🎉 正解！ あなたの勝利です！（ターン数: {self.tries} 回）")
+            self.status_label.config(
+                text=f"🎉 正解！ あなたの勝利です！（ターン数: {self.tries} 回）",
+                fg="#2E7D32",
+            )
             self._end_game()
             return
 
@@ -222,16 +422,19 @@ class HitBlowGUI:
     # ------------------------------------------------------------------
     def _cpu_turn(self):
         if not self.cpu_candidates:
-            self._log("🤔 CPU「候補が尽きてしまいました…推理を続けられません」")
+            self._add_info_row(
+                "🤔 CPU「候補が尽きてしまいました…推理を続けられません」"
+            )
             return
 
         cpu_guess = random.choice(self.cpu_candidates)
         cpu_hit, cpu_blow = judge(self.my_secret, cpu_guess)
-        self._log(f"[CPU] 予想 > {cpu_guess}   Hit={cpu_hit}  Blow={cpu_blow}")
+        self._add_guess_row("CPU", cpu_guess, self.my_secret, cpu_hit, cpu_blow)
 
         if cpu_hit == self.digits:
-            self._log(
-                f"\n💀 残念！CPUが先に正解してしまいました…（答え: {self.my_secret}）"
+            self.status_label.config(
+                text=f"💀 残念！CPUが先に正解してしまいました…（答え: {self.my_secret}）",
+                fg="#C62828",
             )
             self._end_game()
             return
@@ -247,6 +450,7 @@ class HitBlowGUI:
         self.game_over = True
         self.submit_button.config(state="disabled")
         self.guess_entry.config(state="disabled")
+        self.item_button.config(state="disabled")
 
         restart_button = tk.Button(
             self.game_frame, text="もう一度遊ぶ", command=self._restart, width=15
@@ -254,6 +458,7 @@ class HitBlowGUI:
         restart_button.pack(pady=10)
 
     def _restart(self):
+        self.history_canvas.unbind_all("<MouseWheel>")
         self.game_frame.destroy()
         self._build_setup_frame()
 

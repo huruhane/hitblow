@@ -13,6 +13,10 @@ enemy.py の考え方を、input() を使わないイベント駆動の形に書
 数字を1桁だけ見せる」という考え方を、print() ではなく履歴カードへの
 追加としてイベント駆動の形に書き直したもの（使用済みフラグは GUI 側の
 インスタンス変数として持つため、「もう一度遊ぶ」で正しくリセットされる）。
+タイマーも同様に、time.py の「開始時に計測を始め、決着時に経過時間を
+表示する」という考え方を、GUI 側のインスタンス変数（開始時刻）で管理し、
+さらに `root.after` による1秒ごとの再描画で「今何秒経ったか」をリアル
+タイム表示できるようにしたもの。
 
 このバージョンでの変更点:
     - 予想の結果を、数字ごとの「カード」として表示
@@ -22,18 +26,19 @@ enemy.py の考え方を、input() を使わないイベント駆動の形に書
     - 履歴をスクロール可能なカード一覧として表示（従来のテキストログの代わり）
     - アイテム（ヒント表示）ボタンを追加。1ゲームにつき1回だけ使え、
       テキ（あなたが当てる相手の数字）の中からランダムに1桁を見せる。
+    - タイマー表示を追加。ゲーム開始と同時に計測を始め、画面上部に
+      経過時間をリアルタイム表示し、決着時に最終タイムを表示する。
 
 含まれる機能:
     - 予想入力・Hit/Blow のカード表示（基本機能）
     - CPU 対戦モード（交互にターンを進める）
     - アイテム（ヒント表示・1ゲーム1回）
-
-含まれない機能（CLI 版のみ）:
-    - タイマー表示
+    - タイマー表示（リアルタイム経過時間・決着時の最終タイム）
 """
 
 import itertools
 import random
+import time
 import tkinter as tk
 from tkinter import messagebox
 
@@ -69,6 +74,8 @@ class HitBlowGUI:
         self.tries = 0
         self.game_over = False
         self.item_used = False  # アイテム（ヒント）を使用済みかどうか
+        self.start_time = None  # ゲーム開始時刻（time.time()）
+        self.timer_job = None  # root.after() のジョブID（キャンセル用）
 
         self._build_setup_frame()
 
@@ -194,6 +201,9 @@ class HitBlowGUI:
         self.tries = 0
         self.game_over = False
         self.item_used = False  # 新しいゲームなのでアイテムも使える状態に戻す
+        self.start_time = (
+            time.time()
+        )  # ① 開始時刻を記録（time.py の start_timer に相当）
 
         self.setup_frame.destroy()
         self._build_game_frame()
@@ -206,11 +216,20 @@ class HitBlowGUI:
         self.game_frame.pack(fill="both", expand=True)
 
         mode_text = "CPU対戦モード" if self.is_cpu_mode else "通常モード"
+        header_row = tk.Frame(self.game_frame)
+        header_row.pack(fill="x", pady=(0, 10))
+        tk.Button(
+            header_row, text="⏮ 最初の画面に戻る", command=self._confirm_restart
+        ).pack(side="left")
         tk.Label(
-            self.game_frame,
+            header_row,
             text=f"Hit & Blow（{self.digits}桁・重複なし）－ {mode_text}",
             font=("", 13, "bold"),
-        ).pack(pady=(0, 10))
+        ).pack(side="left", padx=(10, 0))
+        self.timer_label = tk.Label(
+            header_row, text="⏱️ 0秒", font=("", 11), fg="#555555"
+        )
+        self.timer_label.pack(side="right")
 
         # --- スクロール可能な履歴エリア（カードを並べる場所） ---
         history_container = tk.Frame(self.game_frame)
@@ -286,6 +305,34 @@ class HitBlowGUI:
             self._add_info_row(
                 "⚔️ CPU対戦モード：あなたとCPUが交互に相手の数字を当て合います。"
             )
+
+        self._tick_timer()  # ① タイマー表示の更新ループを開始
+
+    # ------------------------------------------------------------------
+    # タイマー（time.py の start_timer / show_clear_time に相当）
+    # ------------------------------------------------------------------
+    def _format_elapsed(self, elapsed_seconds):
+        """経過秒数を「X分Y秒」または「Y秒」の文字列にする。"""
+        minutes = int(elapsed_seconds // 60)
+        seconds = int(elapsed_seconds % 60)
+        if minutes > 0:
+            return f"{minutes}分{seconds}秒"
+        return f"{seconds}秒"
+
+    def _tick_timer(self):
+        """1秒ごとに呼び出され、経過時間の表示を更新し続ける。"""
+        if self.game_over or self.start_time is None:
+            return
+
+        elapsed = time.time() - self.start_time
+        self.timer_label.config(text=f"⏱️ {self._format_elapsed(elapsed)}")
+        self.timer_job = self.root.after(1000, self._tick_timer)
+
+    def _stop_timer(self):
+        """タイマーの更新ループを止める（決着時・再スタート時に呼ぶ）。"""
+        if self.timer_job is not None:
+            self.root.after_cancel(self.timer_job)
+            self.timer_job = None
 
     # ------------------------------------------------------------------
     # 履歴エリアへの行追加
@@ -407,8 +454,12 @@ class HitBlowGUI:
         self._add_guess_row("あなた", guess, self.cpu_secret, hit, blow)
 
         if hit == self.digits:
+            elapsed_text = self._format_elapsed(time.time() - self.start_time)
             self.status_label.config(
-                text=f"🎉 正解！ あなたの勝利です！（ターン数: {self.tries} 回）",
+                text=(
+                    f"🎉 正解！ あなたの勝利です！"
+                    f"（ターン数: {self.tries} 回 / クリア時間: {elapsed_text}）"
+                ),
                 fg="#2E7D32",
             )
             self._end_game()
@@ -432,8 +483,12 @@ class HitBlowGUI:
         self._add_guess_row("CPU", cpu_guess, self.my_secret, cpu_hit, cpu_blow)
 
         if cpu_hit == self.digits:
+            elapsed_text = self._format_elapsed(time.time() - self.start_time)
             self.status_label.config(
-                text=f"💀 残念！CPUが先に正解してしまいました…（答え: {self.my_secret}）",
+                text=(
+                    f"💀 残念！CPUが先に正解してしまいました…"
+                    f"（答え: {self.my_secret} / 決着までの時間: {elapsed_text}）"
+                ),
                 fg="#C62828",
             )
             self._end_game()
@@ -448,6 +503,7 @@ class HitBlowGUI:
 
     def _end_game(self):
         self.game_over = True
+        self._stop_timer()
         self.submit_button.config(state="disabled")
         self.guess_entry.config(state="disabled")
         self.item_button.config(state="disabled")
@@ -457,7 +513,17 @@ class HitBlowGUI:
         )
         restart_button.pack(pady=10)
 
+    def _confirm_restart(self):
+        """途中で最初の画面に戻る（決着前は確認ダイアログを挟む）。"""
+        if not self.game_over:
+            if not messagebox.askyesno(
+                "確認", "現在のゲームを中断して、最初の画面に戻りますか？"
+            ):
+                return
+        self._restart()
+
     def _restart(self):
+        self._stop_timer()
         self.history_canvas.unbind_all("<MouseWheel>")
         self.game_frame.destroy()
         self._build_setup_frame()

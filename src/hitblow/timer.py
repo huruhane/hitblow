@@ -35,6 +35,7 @@ def show_clear_time(tries, cpu_secret, is_victory=True):
             print(f"⏱️ クリア時間: {seconds} 秒")
     else:
         # CPUに負けた場合など
+        print(f"📊 かかったターン数: {tries} 回 ")
         if minutes > 0:
             print(f"⏱️ 決着までの時間: {minutes} 分 {seconds} 秒")
         else:
